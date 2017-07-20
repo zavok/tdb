@@ -1,0 +1,105 @@
+#!/usr/lib/plan9/bin/9 rc
+
+tdbrc=$home'/.tdbrc'
+
+fn usage{
+	echo 'usage: tdb [db] cmd [args]'
+	echo '	commands: init put get [-t] tag check'
+}
+
+fn put{
+	file=$*(1)
+	shift
+	if (test ! -e $"file){
+		msg=$"file': file not found'
+		echo $msg >[1=2]
+	}
+	hash=`{sha256sum $"file}
+	hash=$hash(1)
+	fname=`{basename $"file}
+	tags='orig_name="'$"fname'"'
+	tags=(($"tags) ($"*))
+	if (test -e $dbf'/'$hash){
+		msg=$hash': collision detected'
+	        echo $msg >[1=2]
+	        exit $msg
+	}
+	cp $file $dbf'/'$hash
+	echo $hash $tags >> $dbt
+	echo 'ok'
+}
+
+fn get{
+	sedcmd=''
+	if (~ $*(1) -t){
+		sedcmd='s/ .*$//'
+		shift
+	}
+	if (! test $"*) *='.*'
+	ifs='\
+'	{
+		list=`{grep $"* $dbt}
+		if (test $"list)list=$dbf'/'^$list
+	}
+	if (test $"list){for (i in $list) echo $i}|sed $sedcmd
+}
+
+fn tag{
+	echo 'tag not implemented'
+	# > tdb tag $hash $tag
+	# should "toggle" the applied tag
+	hash=$*(1)
+	tag=$*(2)
+}
+
+fn init{
+	echo 'init not implemented'
+	# should create ~/.tdbrc file if absent
+	# should create db folder structure
+	# should add dir to ~/.tdbrc
+}
+fn check{echo 'check not implemented'}
+
+if (test ! -e $"tdbrc){
+	msg=$tdbrc': config file not found!'
+	echo $msg >[1=2]
+	exit $msg
+}
+if (! test $"*){usage;exit}
+if (db=`{grep '^'$*(1) $tdbrc}) shift
+if not                       db=`{sed 1q $tdbrc}
+if (! test $"db){
+	msg=$"db': db not found in config file!'
+	echo $msg >[1=2]
+	exit $msg
+}
+db=$db(2)
+if (! test -d $"db){
+	msg=$"db': db does not exist!'
+	echo $msg >[1=2]
+	exit $msg
+}
+dbt=$db'/db'
+dbf=$db'/f'
+cmd=$*(1)
+shift
+# in theory we could just exec the $cmd
+# in practice it would exec anything
+# and we don't actually want to exec anything
+switch ($cmd){
+case 'put'
+	put   $*
+case 'get'
+	get   $*
+case 'tag'
+	tag   $*
+case 'init'
+	init  $*
+case 'check'
+	check $*
+case *
+	msg='wrong arguments'
+	echo $msg >[1=2]
+	usage
+	exit $msg
+}
