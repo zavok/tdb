@@ -1,105 +1,168 @@
-#!/usr/lib/plan9/bin/9 rc
+#!/bin/env -S rc
 
-tdbrc=$home'/.tdbrc'
+tmp=/tmp/$pid
 
-fn usage{
-	echo 'usage: tdb [db] cmd [args]'
-	echo '	commands: init put get [-t] tag check'
+dbt=tags
+dbf=sha
+
+# Util functions:
+
+fn echo2 {
+	echo $* >[1=2]
 }
 
-fn put{
-	file=$*(1)
+fn _exit {
+	rm -rf $tmp
+	exit $"*
+}
+
+fn _sha {
+	sha1sum $1 | sed 's/  .*//'
+}
+
+fn usage {
+	echo2 'usage: tdb cmd [args]'
+	echo2 'commands:'
+	echo2 ' - get tags...'
+	echo2 ' - tag file tags...'
+	echo2 ' - untag file tags...'
+	echo2 ' - hash file...'
+	_exit usage
+}
+
+# Commands:
+
+fn get {
+	count=$#*
+
+	if (test $count -lt 1) {
+		echo2 get: not enough arguments
+		usage
+	}
+
+	for (tag in $*) {echo '^'^$tag^'	.*'} > $tmp/tags
+
+	grep -f $tmp/tags $dbt      \
+		| uniq -c -1        \
+		| grep '^ *'^$count \
+		| sed 's/.*	//' \
+		> $tmp/sha
+
+	if (test -s $tmp/sha) {
+		grep -f $tmp/sha $dbf \
+			| sed 's/[0-9a-z]*  //'
+	}
+	if not {
+		echo2 No files.
+		_exit get: no files
+	}
+}
+
+fn tag {
+	if (test $#* -lt 2) {
+		usage
+	}
+
+	file=$1
 	shift
-	if (test ! -e $"file){
-		msg=$"file': file not found'
-		echo $msg >[1=2]
+
+	if (! test -f $file) {
+		echo2 file $file not found
+		_exit
 	}
-	hash=`{sha256sum $"file}
-	hash=$hash(1)
-	fname=`{basename $"file}
-	tags='orig_name="'$"fname'"'
-	tags=(($"tags) ($"*))
-	if (test -e $dbf'/'$hash){
-		msg=$hash': collision detected'
-	        echo $msg >[1=2]
-	        exit $msg
+
+	sha=`{_sha $file}
+	tags=$*
+	for (tag in $tags) {
+		line=$tag^'	'^$sha
+		if(! grep $"line $dbt > /dev/null) echo $line >> $dbt
 	}
-	cp $file $dbf'/'$hash
-	echo $hash $tags >> $dbt
-	echo 'ok'
 }
 
-fn get{
-	sedcmd=''
-	if (~ $*(1) -t){
-		sedcmd='s/ .*$//'
-		shift
+fn untag {
+	if (test $#* -lt 2) {
+		usage
 	}
-	if (! test $"*) *='.*'
-	ifs='\
-'	{
-		list=`{grep $"* $dbt}
-		if (test $"list)list=$dbf'/'^$list
+
+	file=$1
+	shift
+
+	if (! test -f $file) {
+		echo2 file $file not found
+		_exit
 	}
-	if (test $"list){for (i in $list) echo $i}|sed $sedcmd
+
+	sha=`{_sha $file}
+	tags=$*
+	cp $dbt $tmp/db
+	for (tag in $tags) {
+		line='/'^$tag^'	'^$sha^'/d'
+		sed -e $"line $tmp/db > $tmp/db.untag
+		mv $tmp/db.untag $tmp/db
+	}
+	cp $tmp/db $dbt
 }
 
-fn tag{
-	echo 'tag not implemented'
-	# > tdb tag $hash $tag
-	# should "toggle" the applied tag
-	hash=$*(1)
-	tag=$*(2)
+fn hash {
+	if (test $#* -lt 1) {
+		echo2 hash: not enough arguments
+		usage
+	}
+
+	files=$*
+	dirs=()
+	while (test $#files -gt 0) {
+		for (file in $files) {
+			if (test -d $"file) dirs=($dirs $"file)
+			if (test -f $"file) sha1sum $"file
+		}
+		dir=$dirs(1)
+		dirs=$dirs(2-)
+		if (test -d $"dir) files=$"dir/*
+		if not files=()
+	}
 }
 
-fn init{
-	echo 'init not implemented'
-	# should create ~/.tdbrc file if absent
-	# should create db folder structure
-	# should add dir to ~/.tdbrc
-}
-fn check{echo 'check not implemented'}
+# Main:
 
-if (test ! -e $"tdbrc){
-	msg=$tdbrc': config file not found!'
-	echo $msg >[1=2]
-	exit $msg
+if (! test $"*) {
+	specify command
+	usage
 }
-if (! test $"*){usage;exit}
-if (db=`{grep '^'$*(1) $tdbrc}) shift
-if not                       db=`{sed 1q $tdbrc}
-if (! test $"db){
-	msg=$"db': db not found in config file!'
-	echo $msg >[1=2]
-	exit $msg
+
+if (! test -f $"dbt){
+	msg=$"dbt': tags db does not exist!'
+	echo2 $msg
+	_exit $msg
 }
-db=$db(2)
-if (! test -d $"db){
-	msg=$"db': db does not exist!'
-	echo $msg >[1=2]
-	exit $msg
+
+if (! test -f $"dbf){
+	msg=$"dbf': sha db does not exist!'
+	echo2 $msg
+	_exit $msg
 }
-dbt=$db'/db'
-dbf=$db'/f'
-cmd=$*(1)
+
+cmd=$1
 shift
+
+mkdir -p $tmp
+
 # in theory we could just exec the $cmd
 # in practice it would exec anything
 # and we don't actually want to exec anything
+
 switch ($cmd){
-case 'put'
-	put   $*
 case 'get'
 	get   $*
 case 'tag'
 	tag   $*
-case 'init'
-	init  $*
-case 'check'
-	check $*
+case 'untag'
+	untag $*
+case 'hash'
+	hash $*
 case *
-	msg='wrong arguments'
-	echo $msg >[1=2]
+	echo2 unknown command: $cmd
 	usage
-	exit $msg
 }
+
+_exit
